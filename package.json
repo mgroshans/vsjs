@@ -1,0 +1,13 @@
+{
+  "name": "vsjs",
+  "version": "0.1.0",
+  "description": "Allows frames to be fetched from vapoursynth files.",
+  "author": "Michael Groshans",
+  "dependencies": {
+    "nan": "^2.4.0",
+    "bindings": "^1.2.1"
+  },
+  "devDependencies": {},
+  "repository": "github:mgroshans/vsjs",
+  "license": "AGPL-3.0"
+}
