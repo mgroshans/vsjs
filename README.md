@@ -85,6 +85,9 @@ Install our dependencies:
 ```
 Then we go through the normal node-gyp process:
 ```
-> node-gyp configure
+> node-gyp configure [--VS_SDK="C:/Vapoursynth/Install/sdk"]
 > node-gyp build
 ```
+To be honest I'm not sure if I've followed all the best practices for gyp
+builds or if the build will work on non-windows systems. If you have trouble
+building please try editing the binding.gyp or open an issue. 

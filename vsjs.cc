@@ -1,7 +1,6 @@
 #include <sstream>
-
+#include <node_buffer.h>
 #include "vsjs.h"
-#include "node_buffer.h"
 
 using v8::Local;
 using v8::Value;
