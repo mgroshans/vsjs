@@ -6,7 +6,7 @@ VapourSynth for JavaScript.
 #### Constructor
 This module allows you to create `Vapoursynth` objects with the following
 syntax:
-```(js)
+```javascript
 let clip = vsjs.Vapoursynth(scriptContents, [scriptFilename]);
 ```
 `scriptContents` is the actual contents of the script (as a buffer) which
