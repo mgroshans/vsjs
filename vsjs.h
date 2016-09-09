@@ -3,8 +3,8 @@
 
 #include <node.h>
 #include <nan.h>
-#include "VSHelper.h"
-#include "VSScript.h"
+#include <VSHelper.h>
+#include <VSScript.h>
 
 class Vapoursynth : public Nan::ObjectWrap {
     public:
