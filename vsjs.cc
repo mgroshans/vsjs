@@ -1,24 +1,33 @@
 #include <sstream>
-#include <node_buffer.h>
 #include "vsjs.h"
-
-using v8::Local;
-using v8::Value;
-using v8::Handle;
-using v8::Number;
-using v8::Object;
-using v8::String;
-using v8::Function;
-using v8::FunctionTemplate;
-
-using node::Buffer::Data;
 
 using std::ostringstream;
 
-Nan::Persistent<Function> Vapoursynth::constructor;
+Napi::Object Vapoursynth::Init(Napi::Env env, Napi::Object exports) {
+    Napi::Function func = DefineClass(env, "Vapoursynth", {
+        InstanceMethod("getInfo", &Vapoursynth::GetInfo),
+        InstanceMethod("getFrame", &Vapoursynth::GetFrame)
+    });
 
-Vapoursynth::Vapoursynth(const char *script, const char *path) {
-    vsapi = vsscript_getVSApi();
+    constructor = Napi::Persistent(func);
+    constructor.SuppressDestruct();
+    exports.Set("Vapoursynth", func);
+    
+    if (!vsscript_init()) {
+        Napi::Error::New(env, "Failed to initialize Vapoursynth environment").ThrowAsJavaScriptException();
+    }
+
+    return exports;
+}
+
+Vapoursynth::Vapoursynth(const Napi::CallbackInfo& info) : Napi::ObjectWrap<Vapoursynth>(info) {
+    Napi::Env env = info.Env();
+
+    Napi::Buffer<char> scriptBuffer = info[0].As<Napi::Buffer<char>>();
+    char *script = scriptBuffer.Data();
+    const char *path = info[1].As<Napi::String>().Utf8Value().c_str();
+
+    vsapi = vsscript_getVSApi2(VAPOURSYNTH_API_VERSION);
     assert(vsapi);
 
     se = NULL;
@@ -33,15 +42,15 @@ Vapoursynth::Vapoursynth(const char *script, const char *path) {
             ss << ": " << error;
         }
 
-        Nan::ThrowError(ss.str().data());
+        Napi::Error::New(env, ss.str()).ThrowAsJavaScriptException();
         return;
     }
 
     node = vsscript_getOutput(se, 0);
     if (!node) {
-       vsscript_freeScript(se);
-       se = NULL;
-        Nan::ThrowError("Failed to retrieve output node\n");
+        vsscript_freeScript(se);
+        se = NULL;
+        Napi::Error::New(env, "Failed to retrieve output node\n").ThrowAsJavaScriptException();
         return;
     }
 
@@ -51,7 +60,7 @@ Vapoursynth::Vapoursynth(const char *script, const char *path) {
         vsapi->freeNode(node);
         vsscript_freeScript(se);
         se = NULL;
-        Nan::ThrowError("Cannot output clips with varying dimensions or unknown length\n");
+        Napi::Error::New(env, "Cannot output clips with varying dimensions or unknown length\n").ThrowAsJavaScriptException();
         return;
     }
 }
@@ -62,48 +71,52 @@ Vapoursynth::~Vapoursynth() {
     }
 }
 
-void Vapoursynth::Init(Handle<Object> exports) {
-    Local<FunctionTemplate> tpl = Nan::New<FunctionTemplate>(New);
-    tpl->SetClassName(Nan::New<String>("Vapoursynth").ToLocalChecked());
-    tpl->InstanceTemplate()->SetInternalFieldCount(1);
-    Nan::SetPrototypeMethod(tpl, "getInfo", GetInfo);
-    Nan::SetPrototypeMethod(tpl, "getFrame", GetFrame);
-    constructor.Reset(Nan::GetFunction(tpl).ToLocalChecked());
-    Nan::Set(exports, Nan::New<String>("Vapoursynth").ToLocalChecked(), Nan::GetFunction(tpl).ToLocalChecked());
+Napi::FunctionReference Vapoursynth::constructor;
 
-    if (!vsscript_init()) {
-        Nan::ThrowError("Failed to initialize Vapoursynth environment");
-        return;
+static int frameSize(const VSVideoInfo *vi) {
+    if (!vi) {
+        return 0;
     }
+
+    int frame_size = (vi->width * vi->format->bytesPerSample) >> vi->format->subSamplingW;
+    if (frame_size) {
+        frame_size *= vi->height;
+        frame_size >>= vi->format->subSamplingH;
+        frame_size *= 2;
+    }
+    frame_size += vi->width * vi->format->bytesPerSample * vi->height;
+
+    return frame_size;
 }
 
-NAN_METHOD(Vapoursynth::New) {
-    if (info.IsConstructCall()) {
-        // Invoked as constructor: `new Vapoursynth(...)`
-        const int32_t scriptLen = Nan::Get(info[0].As<Object>(), Nan::New<String>("length").ToLocalChecked()).ToLocalChecked()->Int32Value();
-        char *script = Data(info[0]);
-        script[scriptLen] = '\0';
-        const Nan::Utf8String utf8path(info[1]);
-        const char *path(*utf8path);
-        Vapoursynth *obj = new Vapoursynth(script, path);
-        obj->Wrap(info.This());
-        info.GetReturnValue().Set(info.This());
-    } else {
-        // Invoked as plain function `Vapoursynth(...)`, turn into construct call
-        const int argc = 2;
-        Local<Value> argv[argc] = { info[0], info[1] };
-        Local<Function> cons = Nan::New<Function>(constructor);
-        info.GetReturnValue().Set(cons->NewInstance(argc, argv));
-    }
+Napi::Value Vapoursynth::GetInfo(const Napi::CallbackInfo &info) {
+    Napi::Env env = info.Env();
+
+    Napi::Object scriptInfo = Napi::Object::New(env);
+
+    scriptInfo.Set("height", vi->height);
+    scriptInfo.Set("width", vi->width);
+    scriptInfo.Set("numFrames", vi->numFrames);
+
+    Napi::Object fps = Napi::Object::New(env);
+    fps.Set("numerator", vi->fpsNum);
+    fps.Set("denominator", vi->fpsDen);
+
+    scriptInfo.Set("fps", fps);
+
+    scriptInfo.Set("frameSize", frameSize(vi));
+
+    return scriptInfo;
 }
 
-class FrameWorker : public Nan::AsyncWorker {
+class FrameWorker : public Napi::AsyncWorker {
     public:
-        FrameWorker(Vapoursynth *obj, int32_t frameNumber, Local<Object> bufferHandle, Nan::Callback *callback)
-                : obj(obj), frameNumber(frameNumber), outBuffer(Data(bufferHandle)), Nan::AsyncWorker(callback) {
-            SaveToPersistent("bufferHandle", bufferHandle);
+        FrameWorker(Vapoursynth *obj, int32_t frameNumber, Napi::Buffer<char> &buffer, Napi::Function &callback)
+            : obj(obj), frameNumber(frameNumber), bufferHandle(Napi::Persistent(buffer)), outBuffer(buffer.Data()), Napi::AsyncWorker(callback) {}
+
+        ~FrameWorker() {
+            bufferHandle.Unref();
         }
-        ~FrameWorker() {}
 
         void Execute() {
             char errMsg[1024];
@@ -112,7 +125,7 @@ class FrameWorker : public Nan::AsyncWorker {
             if (!frame) {
                 ostringstream ss;
                 ss << "Encountered error getting frame " << frameNumber << ": " << errMsg;
-                SetErrorMessage(ss.str().data());
+                SetError(ss.str());
                 return;
             }
 
@@ -133,68 +146,25 @@ class FrameWorker : public Nan::AsyncWorker {
         }
 
     protected:
-        void HandleOKCallback() {
-            v8::Local<v8::Value> argv[] = {
-                Nan::Null(),
-                Nan::New<Number>(frameNumber),
-                GetFromPersistent("bufferHandle")
+        std::vector<napi_value> GetResult(Napi::Env env) {
+            return {
+                env.Null(),
+                Napi::Number::New(env, frameNumber),
+                bufferHandle.Value()
             };
-            callback->Call(3, argv);
-        }
-
-        void HandleErrorCallback() {
-            v8::Local<v8::Value> argv[] = {
-                v8::Exception::Error(Nan::New<String>(ErrorMessage()).ToLocalChecked()),
-                Nan::New<Number>(frameNumber),
-                GetFromPersistent("bufferHandle")
-            };
-            callback->Call(3, argv);
         }
 
     private:
         Vapoursynth *obj;
         int32_t frameNumber;
         char *outBuffer;
+        Napi::Reference<Napi::Buffer<char>> bufferHandle;
 };
 
-NAN_METHOD(Vapoursynth::GetFrame) {
-    Vapoursynth *obj = Unwrap<Vapoursynth>(info.This());
-    int32_t frameNumber = info[0]->Int32Value();
-    Local<Object> bufferHandle = info[1].As<v8::Object>();
-    Nan::Callback *callback = new Nan::Callback(info[2].As<Function>());
-    Nan::AsyncQueueWorker(new FrameWorker(obj, frameNumber, bufferHandle, callback));
-}
-
-static int frameSize(const VSVideoInfo *vi) {
-    if (!vi) {
-        return 0;
-    }
-
-    int frame_size = (vi->width * vi->format->bytesPerSample) >> vi->format->subSamplingW;
-    if (frame_size) {
-        frame_size *= vi->height;
-        frame_size >>= vi->format->subSamplingH;
-        frame_size *= 2;
-    }
-    frame_size += vi->width * vi->format->bytesPerSample * vi->height;
-
-    return frame_size;
-}
-
-NAN_METHOD(Vapoursynth::GetInfo) {
-    Vapoursynth *obj = Unwrap<Vapoursynth>(info.This());
-
-    Local<Object> ret = Nan::New<Object>();
-    Nan::Set(ret, Nan::New<String>("height").ToLocalChecked(), Nan::New<Number>(obj->vi->height));
-    Nan::Set(ret, Nan::New<String>("width").ToLocalChecked(), Nan::New<Number>(obj->vi->width));
-    Nan::Set(ret, Nan::New<String>("numFrames").ToLocalChecked(), Nan::New<Number>(obj->vi->numFrames));
-
-    Local<Object> fps = Nan::New<Object>();
-    Nan::Set(fps, Nan::New<String>("numerator").ToLocalChecked(), Nan::New<Number>(obj->vi->fpsNum));
-    Nan::Set(fps, Nan::New<String>("denominator").ToLocalChecked(), Nan::New<Number>(obj->vi->fpsDen));
-    Nan::Set(ret, Nan::New<String>("fps").ToLocalChecked(), fps);
-
-    Nan::Set(ret, Nan::New<String>("frameSize").ToLocalChecked(), Nan::New<Number>(frameSize(obj->vi)));
-
-    info.GetReturnValue().Set(ret);
+void Vapoursynth::GetFrame(const Napi::CallbackInfo &info) {
+    int32_t frameNumber = info[0].As<Napi::Number>().Int32Value();
+    Napi::Buffer<char> buffer = info[1].As<Napi::Buffer<char>>();
+    Napi::Function callback = info[2].As<Napi::Function>();
+    FrameWorker *worker = new FrameWorker(this, frameNumber, buffer, callback);
+    worker->Queue();
 }

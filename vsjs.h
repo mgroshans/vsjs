@@ -1,14 +1,16 @@
-#ifndef VSJS_H
-#define VSJS_H
+#ifndef _VSJS_H_
+#define _VSJS_H_
 
-#include <node.h>
-#include <nan.h>
+#include <napi.h>
 #include <VSHelper.h>
 #include <VSScript.h>
 
-class Vapoursynth : public Nan::ObjectWrap {
+
+class Vapoursynth : public Napi::ObjectWrap<Vapoursynth> {
     public:
-        static void Init(v8::Handle<v8::Object> exports);
+        static Napi::Object Init(Napi::Env, Napi::Object);
+        Vapoursynth(const Napi::CallbackInfo&);
+        ~Vapoursynth();
 
         const VSAPI *vsapi;
         VSScript *se;
@@ -16,13 +18,9 @@ class Vapoursynth : public Nan::ObjectWrap {
         const VSVideoInfo *vi;
 
     private:
-        Vapoursynth(const char*, const char*);
-        ~Vapoursynth();
-
-        static NAN_METHOD(New);
-        static NAN_METHOD(GetInfo);
-        static NAN_METHOD(GetFrame);
-        static Nan::Persistent<v8::Function> constructor;
+        static Napi::FunctionReference constructor;
+        Napi::Value GetInfo(const Napi::CallbackInfo&);
+        void GetFrame(const Napi::CallbackInfo&);
 };
 
 #endif

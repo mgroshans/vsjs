@@ -1,7 +1,7 @@
-#vsjs
+# vsjs
 VapourSynth for JavaScript.
 
-##Documentation
+## Documentation
 ### Vapoursynth Object
 #### Constructor
 This module allows you to create `Vapoursynth` objects with the following
@@ -59,7 +59,7 @@ was encountered it will be null.
 `frameBuffer` is the same buffer which was originally provided, but now with
 populated with frame data.
 
-##Example
+## Example
 ```javascript
 const fs = require('fs');
 const vsjs = require('vsjs');
@@ -78,7 +78,7 @@ clip.getFrame(0, Buffer.alloc(clip.getInfo().frameSize), (err, frameNumber, buff
 });
 ```
 
-##Build
+## Build
 Install our dependencies:
 ```
 > npm install
@@ -91,3 +91,7 @@ Then we go through the normal node-gyp process:
 To be honest I'm not sure if I've followed all the best practices for gyp
 builds or if the build will work on non-windows systems. If you have trouble
 building please try editing the binding.gyp or open an issue. 
+
+## TODO
+The vapoursynth dlls are no longer installed system-wide. This presents a
+challenge as they must be copied to wherever vsjs will be used...
